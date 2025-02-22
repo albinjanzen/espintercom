@@ -23,17 +23,38 @@ EncodedAudioStream encoder(&now, &sbc);   // encode and write to ESP-now
 StreamCopy copierSource(encoder, sound);  // copies sound into i2s
 
 CsvOutput<int16_t> out(Serial);
-BufferRTOS<uint8_t> buffer(1024 * 10);                  // fast synchronized buffer
-QueueStream<uint8_t> queue(buffer);                     // stream from espnow
-EncodedAudioStream decoder(&queue, new SBCDecoder(256));  // decode and write to I2S - ESP Now is limited to 256 bytes
-StreamCopy copierSink(out, queue);
+BufferRTOS<uint8_t> buffer1(1024 * 10);  // fast synchronized buffer
+BufferRTOS<uint8_t> buffer2(1024 * 10);  // fast synchronized buffer
 
+QueueStream<uint8_t> queue1(buffer1);  // stream from espnow
+QueueStream<uint8_t> queue2(buffer2);  // stream from espnow
+
+EncodedAudioStream decoder(&queue1, new SBCDecoder(256));  // decode and write to I2S - ESP Now is limited to 256 bytes
+InputMixer<uint8_t> mixer;
+
+StreamCopy copierSink(out, mixer);
+
+const char *peers[] = { "A8:48:FA:0B:93:02", "A8:48:FA:0B:93:03" };
 
 void recieveCallback(const esp_now_recv_info *info, const uint8_t *data, int len) {
   decoder.write(data, len);
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           info->src_addr[0], info->src_addr[1], info->src_addr[2], info->src_addr[3], info->src_addr[4], info->src_addr[5]);
+  if (strcmp(macStr, peers[0])) {
+    // change source of the decoder
+    decoder.setStream(&queue1);
+    // write audio data to the queue
+    decoder.write(data, len);
+  }
+  if (strcmp(macStr, peers[1])) {
+    // change source of the decoder
+    decoder.setStream(&queue2);
+    // write audio data to the queue
+    decoder.write(data, len);
+  }
 }
 
-const char *peers[] = { "A8:48:FA:0B:93:02" };
 
 // tasks
 Task sendTask("send-audio", 4096, 1, 0);
@@ -56,7 +77,13 @@ void setup() {
   // start encoder
   encoder.begin(info);
 
-  queue.begin(info);
+  queue1.begin(info);
+  queue2.begin(info);
+
+  mixer.add(queue1);
+  mixer.add(queue2);
+
+  mixer.begin(info);
 
   // start I2S
   Serial.println("starting I2S...");
