@@ -12,7 +12,7 @@
 #include "AudioTools/Communication/ESPNowStream.h"
 #include "AudioTools/AudioCodecs/CodecSBC.h"
 
-const char *peers[] = {"A8:48:FA:0B:93:02", "A8:48:FA:0B:93:03"};
+const char *peers[] = {"A8:48:FA:0B:93:01"};
 
 ESPNowStream now;
 
@@ -46,6 +46,7 @@ void recieveCallback(const esp_now_recv_info *info, const uint8_t *data, int len
     // write audio data to the queue
     decoder2.write(data, len);
   }
+  //Do we have to flush mixer if not all are connected?
 }
 
 
@@ -56,7 +57,7 @@ void setup() {
   // setup esp-now
   auto cfg = now.defaultConfig();
   now.setReceiveCallback(recieveCallback);
-  cfg.mac_address = "A8:48:FA:0B:93:01";
+  cfg.mac_address = "A8:48:FA:0B:93:03";
   cfg.delay_after_failed_write_ms = 0;
   cfg.use_send_ack = false;
   cfg.write_retry_count = 0;
@@ -74,6 +75,9 @@ void setup() {
   // start decoder
   decoder1.begin();
   decoder2.begin();
+
+  sineWave.begin(info, N_B4);
+  encoder.begin(info);
 
   Serial.println("Receiver started...");
 }
