@@ -1,109 +1,83 @@
 /**
- * @file example-serial-send.ino
+ * @file example-serial-receive.ino
  * @author Phil Schatzmann
- * @brief Sending encoded audio over ESPNow
+ * @brief Receiving audio via ESPNow and decoding data to I2S 
  * @version 0.1
  * @date 2022-03-09
- *
+ * 
  * @copyright Copyright (c) 2022
  */
 
 #include "AudioTools.h"
 #include "AudioTools/Communication/ESPNowStream.h"
 #include "AudioTools/AudioCodecs/CodecSBC.h"
-#include "AudioTools/AudioLibs/Concurrency.h"
+
+const char *peers[] = {"A8:48:FA:0B:93:02", "A8:48:FA:0B:93:03"};
 
 ESPNowStream now;
 
-AudioInfo info(32000, 1, 16);
+AudioInfo info(16000, 1, 16);
+
+//TX
 SineWaveGenerator<int16_t> sineWave(32000);     // subclass of SoundGenerator with max amplitude of 32000
 GeneratedSoundStream<int16_t> sound(sineWave);  // Stream generated from sine wave
-SBCEncoder sbc;
-EncodedAudioStream encoder(&now, &sbc);   // encode and write to ESP-now
-StreamCopy copierSource(encoder, sound);  // copies sound into i2s
+EncodedAudioStream encoder(&now, new SBCEncoder());   // encode and write to ESP-now
+StreamCopy copier(encoder, sound);  // copies sound into i2s
 
+//RX
 CsvOutput<int16_t> out(Serial);
-BufferRTOS<uint8_t> buffer1(1024 * 10);  // fast synchronized buffer
-BufferRTOS<uint8_t> buffer2(1024 * 10);  // fast synchronized buffer
-
+BufferRTOS<uint8_t> buffer1(1024 * 5);  // fast synchronized buffer
 QueueStream<uint8_t> queue1(buffer1);  // stream from espnow
-QueueStream<uint8_t> queue2(buffer2);  // stream from espnow
-
-EncodedAudioStream decoder(&queue1, new SBCDecoder(256));  // decode and write to I2S - ESP Now is limited to 256 bytes
-InputMixer<uint8_t> mixer;
-
-StreamCopy copierSink(out, mixer);
-
-const char *peers[] = { "A8:48:FA:0B:93:02", "A8:48:FA:0B:93:03" };
+BufferRTOS<uint8_t> buffer2(1024 * 5);  // fast synchronized buffer
+QueueStream<uint8_t> queue2(buffer1);  // stream from espnow
+OutputMixer<int16_t> mixer(out, 2);  // output mixer with 2 outputs mixing to AudioBoardStream 
+EncodedAudioStream decoder1(&mixer, new SBCDecoder(256)); // decode and write to I2S - ESP Now is limited to 256 bytes
+EncodedAudioStream decoder2(&mixer, new SBCDecoder(256)); // decode and write to I2S - ESP Now is limited to 256 bytes
 
 void recieveCallback(const esp_now_recv_info *info, const uint8_t *data, int len) {
-  decoder.write(data, len);
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
            info->src_addr[0], info->src_addr[1], info->src_addr[2], info->src_addr[3], info->src_addr[4], info->src_addr[5]);
   if (strcmp(macStr, peers[0])) {
-    // change source of the decoder
-    decoder.setStream(&queue1);
     // write audio data to the queue
-    decoder.write(data, len);
+    decoder1.write(data, len);
   }
   if (strcmp(macStr, peers[1])) {
-    // change source of the decoder
-    decoder.setStream(&queue2);
     // write audio data to the queue
-    decoder.write(data, len);
+    decoder2.write(data, len);
   }
 }
 
-
-// tasks
-Task sendTask("send-audio", 4096, 1, 0);
-Task receiveTask("receive-audio", 4096, 1, 1);
 
 void setup() {
   Serial.begin(115200);
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
   // setup esp-now
-  now.setReceiveCallback(recieveCallback);
-  now.addPeers(peers);
   auto cfg = now.defaultConfig();
+  now.setReceiveCallback(recieveCallback);
   cfg.mac_address = "A8:48:FA:0B:93:01";
+  cfg.delay_after_failed_write_ms = 0;
+  cfg.use_send_ack = false;
+  cfg.write_retry_count = 0;
+  cfg.rate = WIFI_PHY_RATE_MCS7_LGI;
   now.begin(cfg);
+  now.addPeers(peers);
 
-  // Setup sine wave
-  sineWave.begin(info, N_B4);
 
-  // start encoder
-  encoder.begin(info);
-
-  queue1.begin(info);
-  queue2.begin(info);
-
-  mixer.add(queue1);
-  mixer.add(queue2);
-
-  mixer.begin(info);
-
-  // start I2S
-  Serial.println("starting I2S...");
-  auto config = out.defaultConfig(TX_MODE);
   out.begin(info);
+  mixer.begin();
+
+  queue1.begin();
+  queue2.begin();
 
   // start decoder
-  decoder.begin(info);
+  decoder1.begin();
+  decoder2.begin();
 
-  // Start audio tasks
-  sendTask.begin([]() {
-    copierSource.copy();
-  });
-
-  receiveTask.begin([]() {
-    copierSink.copy();
-  });
-
-  Serial.println("Started...");
+  Serial.println("Receiver started...");
 }
 
-void loop() {
+void loop() { 
+  copier.copy();
 }
