@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intercom Debug</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0e1014; --panel: #161920; --panel2: #1d2129; --panel3: #242934; --border: #2a303b;
+    --text: #e4e7ed; --muted: #8a92a2; --faint: #5d6574; --accent: #5aa9ff;
+    --ok: #3ecf8e; --ok-bg: #163327; --warn: #f5b041; --warn-bg: #3a2e14; --bad: #ff6b6b; --bad-bg: #3d1c1f;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; }
+  button, input, select { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 9px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--ok-bg); border-color: var(--ok); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  input[type=number] { width: 68px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); }
+
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 15px; margin: 0 10px 0 0; }
+  header .spacer { flex: 1; }
+  #conn { color: var(--muted); }
+  #conn.live { color: var(--ok); }
+
+  .page { padding: 14px 16px; display: grid; gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-width: 0; }
+  .panel h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+  #buildlog { font: 11.5px/1.4 var(--mono); white-space: pre-wrap; max-height: 150px; overflow: auto; color: var(--warn); }
+  #buildpanel[hidden] { display: none; }
+
+  .overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 14px; }
+  .units { display: flex; flex-wrap: wrap; gap: 8px; }
+  .unit { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-width: 150px; }
+  .unit .name { font: 600 13px var(--mono); }
+  .unit .sub { color: var(--muted); font-size: 11.5px; }
+  .matrix { border-collapse: separate; border-spacing: 3px; font-variant-numeric: tabular-nums; }
+  .matrix th { font: 600 11.5px var(--mono); color: var(--muted); padding: 2px 6px; }
+  .matrix td { text-align: center; padding: 6px 8px; border-radius: 6px; font-size: 12px; min-width: 88px; }
+  .matrix td.self { background: var(--panel2); color: var(--faint); }
+  .matrix td.none { background: var(--panel2); color: var(--faint); }
+  .q-good { background: var(--ok-bg); color: var(--ok); }
+  .q-medium { background: var(--warn-bg); color: var(--warn); }
+  .q-poor { background: var(--bad-bg); color: var(--bad); }
+  .legend { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+
+  #boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(600px, 100%), 1fr)); gap: 14px; }
+  .board { padding: 0; overflow: hidden; }
+  .board-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .board-head h2 { margin: 0; font: 600 14px var(--mono); }
+  .board-head .actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 10px; }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab { padding: 12px; display: none; }
+  .tab.active { display: block; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; margin-bottom: 12px; }
+  .kpi { background: var(--panel2); border-radius: 6px; padding: 6px 9px; min-width: 0; }
+  .kpi b { display: block; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi span { color: var(--muted); font-size: 11px; }
+  .kpi.wide { grid-column: span 2; }
+  .kpi.warn b { color: var(--warn); } .kpi.bad b { color: var(--bad); } .kpi.ok b { color: var(--ok); }
+
+  .table-wrap { overflow-x: auto; }
+  table.peers { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.peers th, table.peers td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  table.peers th { color: var(--muted); font-weight: 500; font-size: 11.5px; }
+  table.peers th:first-child, table.peers td:first-child { text-align: left; font-family: var(--mono); }
+  table.peers tr.inactive td { color: var(--faint); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .dot.good { background: var(--ok); } .dot.medium { background: var(--warn); } .dot.poor { background: var(--bad); } .dot.none { background: var(--faint); }
+
+  .charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .chart { background: var(--panel2); border-radius: 6px; padding: 6px; height: 180px; position: relative; min-width: 0; overflow: hidden; }
+  .chart.wide { grid-column: 1 / -1; height: 220px; }
+
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px 10px; margin: 0; min-width: 0; }
+  legend { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; padding: 0 4px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+  .row label { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+  .row input[type=text] { flex: 1; min-width: 160px; }
+  .row input[type=range] { width: 120px; }
+  .eqband { display: grid; grid-template-columns: 22px repeat(3, minmax(0, 1fr)); gap: 4px; align-items: center; margin-top: 4px; }
+  .eqband input { width: 100%; }
+  .eqhead { color: var(--faint); font-size: 11px; }
+
+  .diag { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 14px; font: 12px var(--mono); }
+  .diag div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dotted var(--border); padding: 2px 0; }
+  .diag span:first-child { color: var(--muted); }
+
+  .log { background: #0a0c0f; border-radius: 6px; height: 320px; overflow: auto; padding: 6px 8px; font: 11.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  .log .sent { color: var(--accent); } .log .reply { color: var(--ok); } .log .build { color: var(--warn); } .log .stats { color: var(--faint); }
+  .logbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+  .logbar input[type=text] { flex: 1; min-width: 160px; }
+
+  @media (max-width: 900px) { .overview { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { .page { padding: 10px; } .charts { grid-template-columns: 1fr; } header { padding: 10px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Intercom Debug</h1>
+  <button onclick="cmd('all','tx on')">All TX on</button>
+  <button onclick="cmd('all','tx off')">All TX off</button>
+  <button onclick="cmd('all','reset')">Reset all stats</button>
+  <button onclick="flash('all')">Build + flash all</button>
+  <button id="buildToggle">Build log</button>
+  <span class="spacer"></span>
+  <span id="conn">connecting…</span>
+</header>
+
+<div class="page">
+  <section class="panel" id="buildpanel" hidden><h3>Build</h3><div id="buildlog"></div></section>
+
+  <section class="panel overview">
+    <div>
+      <h3>Units</h3>
+      <div class="units" id="units"><span class="muted">waiting for boards…</span></div>
+    </div>
+    <div>
+      <h3>Who hears whom</h3>
+      <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
+      <div class="legend">Rows: boards on USB (their own reception). Columns: every unit they hear right now. Recent air loss · RSSI. Units drop out as soon as nobody hears them.</div>
+    </div>
+  </section>
+
+  <section id="boards"></section>
+</div>
+
+<script>
+const MAX_POINTS = 120;
+const LOG_LINES = 400;
+const TABS = ['overview', 'radio', 'audio', 'settings', 'diagnostics', 'log'];
+const palette = ['#5aa9ff', '#3ecf8e', '#f5b041', '#c084fc', '#ff6b6b', '#2dd4bf', '#f472b6', '#a3e635'];
+const boards = {};
+const units = {};
+
+const short = mac => mac.slice(-5);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+function post(path, body) { return fetch(path, { method: 'POST', body: JSON.stringify(body) }).then(r => r.json()); }
+function cmd(port, c) { return post('/api/cmd', { port, cmd: c }); }
+function flash(port) { post('/api/flash', { port }).then(r => r.error && alert(r.error)); showBuild(true); }
+function hwreset(port) { post('/api/hwreset', { port }); }
+
+function quality(lossPct, rssi) {
+  if (lossPct == null) return 'none';
+  if (lossPct > 5 || rssi < -85) return 'poor';
+  if (lossPct < 1.5 && rssi > -75) return 'good';
+  return 'medium';
+}
+
+function showBuild(on) {
+  document.getElementById('buildpanel').hidden = !on;
+  document.getElementById('buildToggle').classList.toggle('on', on);
+}
+document.getElementById('buildToggle').onclick = () => showBuild(document.getElementById('buildpanel').hidden);
+
+function makeChart(canvas, title, opts = {}) {
+  return new Chart(canvas, {
+    type: 'line',
+    data: { labels: [], datasets: [] },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      elements: { point: { radius: 0 }, line: { borderWidth: 1.5 } },
+      plugins: { title: { display: true, text: title, color: '#8a92a2' }, legend: { labels: { color: '#8a92a2', boxWidth: 10 } } },
+      scales: {
+        x: { display: false },
+        y: { beginAtZero: opts.zero !== false, ticks: { color: '#8a92a2' }, grid: { color: '#2a303b' } }
+      }
+    }
+  });
+}
+
+function seriesFor(chart, label) {
+  let ds = chart.data.datasets.find(d => d.label === label);
+  if (!ds) {
+    const color = palette[chart.data.datasets.length % palette.length];
+    ds = { label, data: [], borderColor: color, backgroundColor: color };
+    chart.data.datasets.push(ds);
+  }
+  return ds;
+}
+
+function push(chart, values, label) {
+  chart.data.labels.push(label);
+  if (chart.data.labels.length > MAX_POINTS) chart.data.labels.shift();
+  for (const ds of chart.data.datasets) if (!(ds.label in values)) values[ds.label] = null;
+  for (const [name, v] of Object.entries(values)) {
+    const ds = seriesFor(chart, name);
+    while (ds.data.length < chart.data.labels.length - 1) ds.data.push(null);
+    ds.data.push(v);
+    if (ds.data.length > MAX_POINTS) ds.data.shift();
+  }
+  chart.update('none');
+}
+
+function makeScope(canvas) {
+  const chart = makeChart(canvas, 'waveform: sent (before encode) / speaker out', { zero: false });
+  chart.options.scales.x = { display: true, ticks: { color: '#8a92a2', maxTicksLimit: 9, callback: (v, i) => `${(i / 16).toFixed(1)} ms` }, grid: { display: false } };
+  chart.options.scales.y.min = -32768;
+  chart.options.scales.y.max = 32767;
+  chart.data.datasets = [
+    { label: 'sent', data: [], borderColor: palette[0], backgroundColor: palette[0] },
+    { label: 'speaker out', data: [], borderColor: palette[1], backgroundColor: palette[1] },
+  ];
+  return chart;
+}
+
+function boardTemplate(port) {
+  const options = (values, unit = '') => values.map(v => `<option value="${v}">${v}${unit}</option>`).join('');
+  return `
+    <div class="board-head">
+      <h2 data-k="node">${esc(port.replace('/dev/cu.', ''))}</h2>
+      <span class="badge" data-k="state">found</span>
+      <span class="badge" data-k="link">link ?</span>
+      <span class="muted" data-k="headline"></span>
+      <div class="actions">
+        <button data-t="tx">TX</button>
+        <button data-t="play">Play</button>
+        <button data-a="flash" class="danger">Build + flash</button>
+      </div>
+    </div>
+    <div class="tabs">${TABS.map(t => `<button data-tab="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
+
+    <div class="tab" data-pane="overview">
+      <div class="kpis" data-k="kpis"></div>
+      <div class="table-wrap"><table class="peers">
+        <thead><tr><th>sender</th><th>quality</th><th>RSSI</th><th>loss now</th><th>direct loss</th><th>via relay</th><th>audible</th><th>buffer / target</th><th>late</th><th>concealed</th></tr></thead>
+        <tbody data-k="peers"></tbody>
+      </table></div>
+    </div>
+
+    <div class="tab" data-pane="radio">
+      <div class="charts">
+        <div class="chart"><canvas data-k="rateChart"></canvas></div>
+        <div class="chart"><canvas data-k="lossChart"></canvas></div>
+        <div class="chart"><canvas data-k="rssiChart"></canvas></div>
+        <div class="chart"><canvas data-k="profileChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="tab" data-pane="audio">
+      <div class="charts">
+        <div class="chart wide"><canvas data-k="scope"></canvas></div>
+        <div class="chart wide"><canvas data-k="bufferChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="tab" data-pane="settings">
+      <div class="groups">
+        <fieldset><legend>Transmit</legend>
+          <div class="row"><button data-t="tx">TX</button><button data-t="adapt">Adaptive</button></div>
+          <div class="row"><label>PHY rate <select data-k="rate">${options([1, 2, 5.5, 11, 6, 9, 12, 18, 24], ' Mbps')}</select></label></div>
+          <div class="row">
+            <label>LC3 <select data-k="lc3Kbps">${options([16, 24, 32, 48, 64], ' kbps')}</select></label>
+            <label>Redundant <select data-k="redundantKbps">${options([16, 24, 32], ' kbps')}</select></label>
+          </div>
+          <div class="row"><label>Redundancy depth <select data-k="redundancy">${options([0, 1, 2])}</select></label></div>
+          <div class="row muted" data-k="manualNote">Codec settings apply when adaptive is off.</div>
+        </fieldset>
+        <fieldset><legend>Source</legend>
+          <div class="row"><label>Tone <input type="number" min="0" max="7900" data-k="tone"> Hz</label></div>
+          <div class="row">
+            <select data-k="source"><option value="sine">Sine</option><option value="url">URL / file</option></select>
+            <button data-a="stream">Start</button><span class="badge" data-k="streamState">sine</span>
+          </div>
+          <div class="row"><input type="text" data-k="url" value="https://sverigesradio.se/topsy/direkt/132-hi-aac.m3u8" placeholder="stream URL or file path"></div>
+        </fieldset>
+        <fieldset><legend>Playback</legend>
+          <div class="row"><button data-t="play">Play</button><button data-t="test">Local test tone</button><button data-t="eq">Voice EQ</button><button data-t="alerts">Alerts</button></div>
+          <div class="row"><label>Volume <input type="range" min="0" max="100" data-k="vol"></label><span class="muted" data-k="volText"></span></div>
+          <div class="eqband eqhead"><span></span><span>Hz</span><span>dB</span><span>Q</span></div>
+          ${[0, 1, 2, 3, 4].map(i => `<div class="eqband" data-band="${i}"><span class="muted">${i + 1}</span><input type="number" min="50" max="7800" step="50"><input type="number" min="-15" max="15"><input type="number" min="0.3" max="10" step="0.1"></div>`).join('')}
+          <div class="row"><button data-a="eqreset">Reset EQ</button></div>
+        </fieldset>
+        <fieldset><legend>Sounds</legend>
+          <div class="row">
+            <button data-chime="startup">Startup</button>
+            <button data-chime="status 3">Status: 3 others</button>
+          </div>
+          <div class="row">
+            <button data-chime="join">Join</button>
+            <button data-chime="leave">Leave</button>
+          </div>
+          <div class="row">
+            <button data-chime="update">Update needed</button>
+            <button data-chime="full">Group full</button>
+          </div>
+        </fieldset>
+        <fieldset><legend>Testing &amp; hardware</legend>
+          <div class="row"><label>Simulated receive loss <input type="number" min="0" max="100" step="1" data-k="simloss"> %</label></div>
+          <div class="row"><label>Ignore direct packets from <input type="text" data-k="block" placeholder="e.g. 29:30" style="width:90px"></label><button data-a="block">Apply</button></div>
+          <div class="row"><label>I2S pins BCK / WS / DATA</label></div>
+          <div class="row"><input type="number" data-k="bck"><input type="number" data-k="ws"><input type="number" data-k="data"><button data-a="pins">Save + reboot</button></div>
+          <div class="row"><button data-a="reset">Reset stats</button><button data-a="reboot">Reboot</button><button data-a="hwreset">HW reset</button><button data-a="flash" class="danger">Build + flash</button></div>
+        </fieldset>
+      </div>
+    </div>
+
+    <div class="tab" data-pane="diagnostics"><div class="diag" data-k="diag"></div></div>
+
+    <div class="tab" data-pane="log">
+      <div class="log" data-k="log"></div>
+      <div class="logbar">
+        <label class="muted"><input type="checkbox" data-k="showStats"> stats JSON</label>
+        <input type="text" placeholder="raw command, e.g. tone 1000" data-k="raw">
+        <button data-a="send">Send</button>
+        <button data-a="clear">Clear</button>
+      </div>
+    </div>`;
+}
+
+function getBoard(port) {
+  if (boards[port]) return boards[port];
+  const el = document.createElement('section');
+  el.className = 'panel board';
+  el.innerHTML = boardTemplate(port);
+  document.getElementById('boards').appendChild(el);
+  const $ = k => el.querySelector(`[data-k="${k}"]`);
+  const b = { el, $, port, prev: null, logLines: [], lossEma: {}, waveTs: {}, streaming: false };
+
+  b.charts = {
+    rate: makeChart($('rateChart'), 'packets / s'),
+    loss: makeChart($('lossChart'), 'loss % per second (air / audible)'),
+    rssi: makeChart($('rssiChart'), 'RSSI dBm', { zero: false }),
+    profile: makeChart($('profileChart'), 'own send profile (kbps / depth)'),
+    buffer: makeChart($('bufferChart'), 'jitter buffer ms per sender (solid) and target (dashed)'),
+    scope: makeScope($('scope')),
+  };
+
+  const selectTab = name => {
+    el.querySelectorAll('[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    el.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+    store.set(`tab:${port}`, name);
+    if (name === 'log') renderLog(b);
+  };
+  el.querySelectorAll('[data-tab]').forEach(t => t.onclick = () => selectTab(t.dataset.tab));
+  selectTab(store.get(`tab:${port}`) || 'overview');
+
+  el.querySelectorAll('[data-t]').forEach(btn => btn.onclick = () => {
+    const on = btn.classList.contains('on');
+    cmd(port, `${btn.dataset.t} ${on ? 'off' : 'on'}`);
+  });
+  const onChange = (k, f) => $(k).onchange = e => cmd(port, f(e.target.value));
+  onChange('vol', v => `vol ${v}`);
+  onChange('tone', v => `tone ${v}`);
+  onChange('rate', v => `rate ${v}`);
+  onChange('lc3Kbps', v => `kbps ${v}`);
+  onChange('redundantKbps', v => `rkbps ${v}`);
+  onChange('redundancy', v => `redundancy ${v}`);
+  onChange('simloss', v => `simloss ${v}`);
+  el.querySelectorAll('[data-band]').forEach(band => {
+    const inputs = band.querySelectorAll('input');
+    inputs.forEach(input => input.onchange = () =>
+      cmd(port, `eqband ${band.dataset.band} ${inputs[0].value} ${inputs[1].value} ${inputs[2].value}`));
+  });
+  const syncSource = () => { $('url').style.display = $('source').value === 'url' ? '' : 'none'; };
+  $('source').onchange = syncSource;
+  syncSource();
+
+  el.querySelectorAll('[data-a]').forEach(btn => btn.onclick = () => {
+    const a = btn.dataset.a;
+    if (a === 'pins') cmd(port, `pins ${$('bck').value} ${$('ws').value} ${$('data').value}`);
+    else if (a === 'reset') { cmd(port, 'reset'); b.prev = null; }
+    else if (a === 'reboot') cmd(port, 'reboot');
+    else if (a === 'hwreset') hwreset(port);
+    else if (a === 'flash') flash(port);
+    else if (a === 'eqreset') cmd(port, 'eqreset');
+    else if (a === 'block') cmd(port, `block ${$('block').value || 'off'}`);
+    else if (a === 'stream') toggleStream(b);
+    else if (a === 'send') { cmd(port, $('raw').value); $('raw').value = ''; }
+    else if (a === 'clear') { b.logLines = []; renderLog(b); }
+  });
+  el.querySelectorAll('[data-chime]').forEach(btn => btn.onclick = () => cmd(port, `chime ${btn.dataset.chime}`));
+  $('raw').onkeydown = e => { if (e.key === 'Enter') el.querySelector('[data-a="send"]').click(); };
+  $('showStats').onchange = () => renderLog(b);
+
+  boards[port] = b;
+  return b;
+}
+
+function toggleStream(b) {
+  const src = b.$('source').value;
+  const body = b.streaming || src === 'sine' ? { port: b.port, source: 'stop' } : { port: b.port, source: src, url: b.$('url').value };
+  post('/api/stream', body);
+}
+
+function setStream(b, state) {
+  b.streaming = state === 'playing';
+  const btn = b.el.querySelector('[data-a="stream"]');
+  btn.textContent = b.streaming ? 'Stop' : 'Start';
+  btn.classList.toggle('on', b.streaming);
+  b.$('streamState').textContent = b.streaming ? 'streaming' : 'sine';
+  b.$('streamState').className = 'badge' + (b.streaming ? ' ok' : '');
+}
+
+function setState(b, state) {
+  const badge = b.$('state');
+  badge.textContent = state;
+  badge.className = 'badge ' + ({ live: 'ok', flashed: 'ok', flashing: 'warn', 'flash-failed': 'bad', gone: 'bad' }[state] || '');
+}
+
+function addLog(b, cls, text, ts) {
+  const time = new Date((ts || Date.now() / 1000) * 1000).toLocaleTimeString();
+  const entry = { cls, text: `${time}  ${text}` };
+  b.logLines.push(entry);
+  if (b.logLines.length > LOG_LINES) b.logLines.shift();
+  if (cls === 'stats' && !b.$('showStats').checked) return;
+  const log = b.$('log');
+  if (!log.offsetParent) return;
+  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = entry.text;
+  log.appendChild(div);
+  while (log.childNodes.length > LOG_LINES) log.removeChild(log.firstChild);
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+function renderLog(b) {
+  const show = b.$('showStats').checked;
+  b.$('log').innerHTML = b.logLines.filter(l => show || l.cls !== 'stats').map(l => `<div class="${l.cls}">${esc(l.text)}</div>`).join('');
+  b.$('log').scrollTop = b.$('log').scrollHeight;
+}
+
+function kpi(label, value, cls = '') { return `<div class="kpi ${cls}"><b title="${esc(value)}">${esc(value)}</b><span>${esc(label)}</span></div>`; }
+
+function onWave(b, w) {
+  const bin = atob(w.data);
+  const samples = new Int16Array(bin.length / 2);
+  for (let i = 0; i < samples.length; i++) samples[i] = (bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8)) << 16 >> 16;
+  const chart = b.charts.scope;
+  chart.data.datasets[w.src === 'tx' ? 0 : 1].data = Array.from(samples);
+  b.waveTs[w.src] = Date.now();
+  if (chart.data.labels.length !== samples.length) chart.data.labels = samples.map((_, i) => i);
+  if (!b.scopePending) {
+    b.scopePending = true;
+    requestAnimationFrame(() => { b.scopePending = false; chart.update('none'); });
+  }
+}
+
+function updateControls(b, s) {
+  const toggles = { tx: s.txEnabled, play: s.playEnabled, test: s.testTone, eq: s.eq, adapt: s.adaptive, alerts: s.alerts };
+  const names = { tx: 'TX', play: 'Play', test: 'Local test tone', eq: 'Voice EQ', adapt: 'Adaptive', alerts: 'Alerts' };
+  b.el.querySelectorAll('[data-t]').forEach(btn => {
+    const on = toggles[btn.dataset.t];
+    btn.classList.toggle('on', !!on);
+    btn.textContent = `${names[btn.dataset.t]} ${on ? 'on' : 'off'}`;
+  });
+  const values = { vol: s.volume, tone: s.tone, rate: s.rate, lc3Kbps: s.lc3Kbps, redundantKbps: s.redundantKbps,
+    redundancy: s.redundancy, simloss: s.simLossPct, block: s.blocked, bck: s.pins.bck, ws: s.pins.ws, data: s.pins.data };
+  for (const [k, v] of Object.entries(values)) {
+    const input = b.$(k);
+    if (input && document.activeElement !== input && v != null) input.value = v;
+  }
+  b.$('volText').textContent = `${s.volume}%`;
+  b.$('manualNote').textContent = s.adaptive ? 'Adaptive is on: kbps and depth below are only used when it is turned off.' : 'Manual codec settings are active.';
+  (s.eqBands || []).forEach((band, i) => {
+    const inputs = b.el.querySelectorAll(`[data-band="${i}"] input`);
+    band.forEach((v, j) => { if (document.activeElement !== inputs[j]) inputs[j].value = v; });
+  });
+}
+
+function peerQuality(b, p, dt, prev) {
+  const old = prev && prev.peers.find(q => q.mac === p.mac);
+  if (old && p.rx >= old.rx) {
+    const drx = p.rx - old.rx, dlost = p.lost - old.lost;
+    const pct = drx + dlost ? 100 * dlost / (drx + dlost) : 0;
+    const prevEma = b.lossEma[p.mac] ?? pct;
+    b.lossEma[p.mac] = prevEma + (pct - prevEma) * 0.3;
+  }
+  return b.lossEma[p.mac];
+}
+
+function onStats(b, s, ts) {
+  const prev = b.prev;
+  b.prev = s;
+  b.stats = s;
+  b.node = s.node;
+  b.$('node').textContent = s.node;
+  const link = s.link || '?';
+  b.$('link').textContent = `link ${link}`;
+  b.$('link').className = 'badge ' + ({ good: 'ok', medium: 'warn', poor: 'bad' }[link] || '');
+  b.$('headline').textContent = `${s.liveKbps}k + ${s.liveDepth}×${s.liveRedundantKbps}k · ${s.rate} Mbps · up ${(s.uptimeMs / 1000).toFixed(0)} s`;
+  updateControls(b, s);
+
+  const dt = prev && s.uptimeMs > prev.uptimeMs ? (s.uptimeMs - prev.uptimeMs) / 1000 : 0;
+  const badReset = ['brownout', 'panic', 'task-watchdog', 'interrupt-watchdog', 'watchdog'].includes(s.reset);
+  const cpu = s.decodeUs != null ? `${(s.encodeUs / 100).toFixed(0)}% / ${(s.decodeUs / 100).toFixed(0)}%` : '?';
+  b.$('kpis').innerHTML = [
+    kpi('link / profile', `${link} · ${s.liveKbps}k + ${s.liveDepth}×${s.liveRedundantKbps}k redundancy`, `wide ${{ good: 'ok', medium: 'warn', poor: 'bad' }[link] || ''}`),
+    kpi('worst listener', s.listeners ? `${s.worstLossPct.toFixed(1)}% ${s.worstRssi} dBm` : 'none'),
+    kpi('listeners / senders', `${s.listeners} / ${s.senders}`),
+    kpi('group settings', s.groupVersion != null ? `v${s.groupVersion} by ${s.groupOwner}` : '?'),
+    kpi('packet / airtime', `${s.packetBytes} B · ${(s.airtimeUs / 1000).toFixed(1)} ms`),
+    kpi('tx packets', `${s.tx}${s.txFail ? ` (${s.txFail} fail)` : ''}`, s.txFail ? 'bad' : ''),
+    kpi('CPU core 0 / 1', s.cpu0 != null ? `${s.cpu0.toFixed(0)}% / ${s.cpu1.toFixed(0)}%` : '?', Math.max(s.cpu0 ?? 0, s.cpu1 ?? 0) > 85 ? 'bad' : Math.max(s.cpu0 ?? 0, s.cpu1 ?? 0) > 70 ? 'warn' : ''),
+    kpi('tx / mixer / relay / wifi', s.cpuTx != null ? `${s.cpuTx.toFixed(0)} / ${s.cpuMixer.toFixed(0)} / ${s.cpuRelay.toFixed(0)} / ${s.cpuWifi.toFixed(0)}%` : '?'),
+    kpi('relaying', s.relaying ? `${s.relaying} sender(s) · ${s.relaySent} sent` : 'no', s.relaying ? 'ok' : ''),
+    kpi('peers mixed', s.mixed),
+    kpi('pops', s.glitches ?? 0, s.glitches ? 'warn' : ''),
+    kpi('last reset', s.reset || '?', badReset ? 'bad' : ''),
+    kpi('free heap', `${(s.heap / 1024).toFixed(0)} KB`, s.heap < 30000 ? 'warn' : ''),
+  ].join('');
+
+  const rows = s.peers.map(p => {
+    const loss = p.active ? peerQuality(b, p, dt, prev) : null;
+    const q = p.active ? quality(loss ?? 0, p.rssi) : 'none';
+    const total = p.rx + p.lost;
+    const audible = total ? (100 * (p.lost - p.recovered) / total).toFixed(2) : '0.00';
+    const tip = `rx ${p.rx}, lost ${p.lost}, recovered ${p.recovered}, plc ${p.plc}, underruns ${p.underruns}, late ${p.late}, restarts ${p.restarts}, drift ${p.driftDrops}/${p.driftInserts}, slot gap ${p.slotGapUs} us`;
+    return `<tr class="${p.active ? '' : 'inactive'}" title="${esc(tip)}">
+      <td>${short(p.mac)}${p.playing ? ' 🔊' : ''}</td>
+      <td><span class="dot ${q}"></span>${p.active ? q : `silent ${(p.silentMs / 1000).toFixed(0)} s`}</td>
+      <td>${p.rssi}</td>
+      <td>${loss != null ? loss.toFixed(1) + '%' : '–'}</td>
+      <td>${(p.directLossPct ?? 0).toFixed(1)}%</td>
+      <td>${p.viaRelay ?? 0}${p.relayingFor ? ' · I relay' : ''}</td>
+      <td>${audible}%</td>
+      <td>${(p.bufferMs ?? 0).toFixed(0)} / ${(p.targetMs ?? 0).toFixed(0)} ms</td>
+      <td>${(p.maxLateMs ?? 0).toFixed(1)} ms</td>
+      <td>${p.concealed ?? 0}</td>
+    </tr>`;
+  });
+  b.$('peers').innerHTML = rows.join('') || '<tr><td colspan="10" class="muted">no senders heard</td></tr>';
+
+  b.$('diag').innerHTML = Object.entries(s)
+    .filter(([, v]) => v === null || typeof v !== 'object')
+    .sort(([a], [c]) => a.localeCompare(c))
+    .map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(2) : v)}</span></div>`)
+    .join('');
+
+  const scope = b.charts.scope;
+  ['tx', 'rx'].forEach((src, i) => {
+    if (Date.now() - (b.waveTs[src] || 0) > 2000 && scope.data.datasets[i].data.length) {
+      scope.data.datasets[i].data = [];
+      scope.update('none');
+    }
+  });
+
+  if (!prev || dt <= 0 || s.tx < prev.tx) return;
+  const label = new Date(ts * 1000).toLocaleTimeString();
+  const rate = { tx: (s.tx - prev.tx) / dt };
+  const loss = {}, rssi = {}, buffer = {};
+  for (const p of s.peers) {
+    const name = short(p.mac);
+    const old = prev.peers.find(q => q.mac === p.mac);
+    rssi[name] = p.active ? p.rssi : null;
+    if (p.active) { buffer[name] = p.bufferMs; buffer[`${name} target`] = p.targetMs; }
+    if (!old || p.rx < old.rx) continue;
+    const drx = p.rx - old.rx, dlost = p.lost - old.lost, drec = p.recovered - old.recovered;
+    rate[`rx ${name}`] = drx / dt;
+    loss[`air ${name}`] = drx + dlost ? 100 * dlost / (drx + dlost) : 0;
+    loss[`audible ${name}`] = drx + dlost ? 100 * (dlost - drec) / (drx + dlost) : 0;
+  }
+  push(b.charts.rate, rate, label);
+  push(b.charts.loss, loss, label);
+  push(b.charts.rssi, rssi, label);
+  push(b.charts.profile, { 'kbps': s.liveKbps, 'depth ×10': s.liveDepth * 10 }, label);
+  push(b.charts.buffer, buffer, label);
+  b.charts.buffer.data.datasets.forEach(ds => { ds.borderDash = ds.label.endsWith('target') ? [4, 4] : []; });
+  renderOverview();
+}
+
+let overviewPending = false;
+function renderOverview() {
+  if (overviewPending) return;
+  overviewPending = true;
+  requestAnimationFrame(() => { overviewPending = false; drawOverview(); });
+}
+
+function drawOverview() {
+  const connected = Object.values(boards).filter(b => b.stats);
+  const receivers = connected.map(b => b.stats.node).sort();
+  const heard = new Set(receivers);
+  connected.forEach(b => b.stats.peers.forEach(p => { if (p.active) heard.add(p.mac); }));
+  const senders = [...heard].sort();
+  const byMac = Object.fromEntries(connected.map(b => [b.stats.node, b]));
+
+  document.getElementById('units').innerHTML = senders.map(mac => {
+    const b = byMac[mac];
+    if (!b) return `<div class="unit"><div class="name">${short(mac)}</div><div class="sub">heard over the air · not on USB</div></div>`;
+    const s = b.stats;
+    const cls = { good: 'ok', medium: 'warn', poor: 'bad' }[s.link] || '';
+    return `<div class="unit"><div class="name">${short(mac)} <span class="badge ${cls}">${esc(s.link)}</span></div>
+      <div class="sub">${esc(b.port.replace('/dev/cu.', ''))} · TX ${s.txEnabled ? 'on' : 'off'} · ${s.liveKbps}k+${s.liveDepth}×${s.liveRedundantKbps}k</div></div>`;
+  }).join('') || '<span class="muted">waiting for boards…</span>';
+
+  const cell = (rx, tx) => {
+    if (rx === tx) return '<td class="self">—</td>';
+    const rb = byMac[rx];
+    if (rb) {
+      const p = rb.stats.peers.find(q => q.mac === tx && q.active);
+      if (p) {
+        const loss = rb.lossEma[tx] ?? 0;
+        const relay = p.viaRelay && p.directLossPct > 50 ? ' · relay' : '';
+        return `<td class="q-${quality(loss, p.rssi)}">${loss.toFixed(1)}% · ${p.rssi}${relay}</td>`;
+      }
+    }
+    return '<td class="none">not heard</td>';
+  };
+  const head = `<tr><th>rx \\ tx</th>${senders.map(m => `<th>${short(m)}</th>`).join('')}</tr>`;
+  const body = receivers.map(rx => `<tr><th>${short(rx)}</th>${senders.map(tx => cell(rx, tx)).join('')}</tr>`).join('');
+  document.getElementById('matrix').innerHTML = receivers.length ? head + body : '';
+}
+
+function onEvent(e) {
+  if (e.type === 'build') {
+    const bl = document.getElementById('buildlog');
+    const div = document.createElement('div');
+    div.textContent = `${e.port ? e.port.replace('/dev/cu.', '') + ': ' : ''}${e.line}`;
+    bl.appendChild(div);
+    while (bl.childNodes.length > 300) bl.removeChild(bl.firstChild);
+    bl.scrollTop = bl.scrollHeight;
+    if (e.port) addLog(getBoard(e.port), 'build', e.line, e.ts);
+    return;
+  }
+  const b = getBoard(e.port);
+  if (e.type === 'port') { setState(b, e.state); if (e.state !== 'found') addLog(b, 'build', `port ${e.state}`, e.ts); return; }
+  if (e.type === 'stream') { setStream(b, e.state); addLog(b, 'build', `stream ${e.state}`, e.ts); return; }
+  if (e.type === 'sent') { addLog(b, 'sent', `> ${e.line}`, e.ts); return; }
+  if (e.type !== 'line') return;
+  if (b.$('state').textContent !== 'live' && Date.now() / 1000 - e.ts < 5) setState(b, 'live');
+  const j = e.json;
+  if (j && j.type === 'wave') { onWave(b, j); return; }
+  if (j && j.type === 'glitch') { addLog(b, 'build', `${j.jump >= 5000 ? 'POP' : 'DIP'} jump ${j.jump} mixed ${j.mixed}: ${j.events.join(', ') || 'no event'}`, e.ts); return; }
+  if (j && j.type === 'stats') { if (j.peers) onStats(b, j, e.ts); addLog(b, 'stats', e.line, e.ts); return; }
+  if (j && j.type === 'reply') { addLog(b, 'reply', `< ${j.msg}`, e.ts); return; }
+  if (j && j.type === 'boot') { b.prev = null; addLog(b, 'reply', `boot ${j.node} (reset: ${j.reset})`, e.ts); return; }
+  addLog(b, '', e.line, e.ts);
+}
+
+function connect() {
+  const es = new EventSource('/events');
+  const conn = document.getElementById('conn');
+  es.onopen = () => { conn.textContent = 'live'; conn.className = 'live'; };
+  es.onerror = () => { conn.textContent = 'disconnected, retrying…'; conn.className = ''; };
+  es.onmessage = m => onEvent(JSON.parse(m.data));
+}
+connect();
+</script>
+</body>
+</html>
