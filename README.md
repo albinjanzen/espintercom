@@ -161,3 +161,9 @@ In priority order:
 7. **Dynamic de-esser** if the static EQ is not enough for harsh S sounds.
 8. **Hardware interface.** Volume and mute buttons, a status LED, battery monitoring on an ADC1 pin.
 9. **Later.** Encryption, more than 8 units, faster relay takeover, multi hop relay, voice prompts, a gateway board for live monitoring of all units, automated tests of the jitter buffer and packet parsing on the computer.
+
+### Skydiving features (later)
+
+- **Altitude monitoring.** A barometric sensor (for example BMP390 or DPS310 on I2C) for altitude and freefall detection. Possible uses: audible altitude cues such as a breakoff tone, sharing each jumper's altitude with the group in the existing reception reports, and switching profiles on exit or deployment. Audible cues must stay a complement to a certified altimeter, never a replacement.
+- **GPS.** A small GNSS module (for example u-blox M10) for position and speed: group positions on the ground station, landing pattern review, and data for the jump log.
+- **Recording.** Store the jump's audio on the unit (SD card, or flash after the partition change). LC3 frames are already encoded, so recording them costs almost no CPU: about 4 KB/s per stream at 32 kbps, around 3.6 MB for 15 minutes. Recording each sender's stream separately allows replay and mixing afterwards. Combined with altitude, GPS and link statistics this becomes the black box: a full replay of each jump with audio, altitude, positions and radio quality. Writes need their own task so slow SD writes never stall audio.
