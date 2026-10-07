@@ -162,8 +162,45 @@ In priority order:
 8. **Hardware interface.** Volume and mute buttons, a status LED, battery monitoring on an ADC1 pin.
 9. **Later.** Encryption, more than 8 units, faster relay takeover, multi hop relay, voice prompts, a gateway board for live monitoring of all units, automated tests of the jitter buffer and packet parsing on the computer.
 
+### Pin plan
+
+For new units, so planned hardware does not collide. GPIO 6 to 11 belong to the flash, GPIO 1 and 3 to USB serial, GPIO 34 to 39 are input only, and ADC2 pins cannot measure while WiFi is on.
+
+| Function | GPIO | Notes |
+|---|---|---|
+| Amplifier I2S BCK / WS / DATA | 14 / 15 / 22 | I2S0 output, as today. 15 is a strapping pin but fine as an output after boot |
+| Amplifier SD (mute) | 23 | High = on (left channel), low = shutdown |
+| Microphones I2S SCK / WS | 26 / 25 | I2S1 input, separate from the amplifier so each keeps its own format |
+| Microphones I2S data | 35 | Input only pin. Two INMP441 share it: L/R to GND on one, to 3.3 V on the other |
+| I2C SDA / SCL | 21 / 19 | Barometer, IMU, magnetometer, battery gauge on one bus. Not 22, which is taken by I2S |
+| Sensor interrupts | 36, 39 | Input only, optional (IMU, barometer data ready) |
+| GPS UART2 RX / TX | 16 / 17 | |
+| Battery voltage (if no gauge) | 34 | ADC1, through a resistor divider |
+| Touch pads | 27, 32, 33 | Built in capacitive touch |
+| Vibration motor | 18 | Through a transistor |
+| Status LED | 2 | Onboard LED on the NodeMCU-32S |
+
+The current test units are wired differently (the speaker board uses BCK 15, WS 14) and keep their saved pins.
+
+### Wind and noise
+
+Wind noise is the main threat to clarity in freefall. In order of impact:
+
+1. **Microphone type and placement.** A throat or bone conduction mic, or an in ear microphone in a sealed earbud, picks up voice through the body and is nearly immune to airborne wind. A normal mic should sit 2 to 3 cm from the mouth, inside the helmet shell or chin guard, out of the direct airflow and away from vents, behind foam plus a fur or felt cover, and mechanically decoupled from the shell to avoid buffeting.
+2. **Signal processing on the sending unit.** A steep high pass at about 200 to 300 Hz (most wind energy sits below), AGC with a limiter, and a noise gate or VAD so wind is not sent between words.
+3. **Dual microphone suppression.** Two mics 1.5 to 3 cm apart near the mouth: speech reaches both coherently, while turbulence is largely uncorrelated between them, so frequency bands with low coherence are attenuated. Needs an FFT per 10 ms frame for each mic, estimated at about 10 to 15 % of one core with the ESP-DSP library. That is a deliberate live cost for the core function. The send task's core has room: about 42 % free today, and VAD saves the encode cost while nobody talks.
+4. **Single mic spectral noise reduction** (Wiener filter with a noise estimate from the pauses) as a cheaper alternative, about 5 to 10 % of a core.
+5. **The listener side.** Isolating earbuds keep the wind out of the ears, so the received voice needs less volume and stays clear.
+
+Neural noise suppression (RNNoise, Espressif's AFE) gives the best result but needs an ESP32-S3 or several times the CPU this board has.
+
 ### Skydiving features (later)
 
 - **Altitude monitoring.** A barometric sensor (for example BMP390 or DPS310 on I2C) for altitude and freefall detection. Possible uses: audible altitude cues such as a breakoff tone, sharing each jumper's altitude with the group in the existing reception reports, and switching profiles on exit or deployment. Audible cues must stay a complement to a certified altimeter, never a replacement.
 - **GPS.** A small GNSS module (for example u-blox M10) for position and speed: group positions on the ground station, landing pattern review, and data for the jump log.
+- **Motion (IMU).** Accelerometer and gyro (for example BMI270 or LSM6DSO) for phase detection together with the barometer (climb, exit, freefall, opening shock, canopy, landing), body orientation and spin, and tap gestures such as a double tap to mute, which work with gloves.
+- **Magnetometer.** Heading under canopy; with GPS, direction and distance to other jumpers.
+- **Second microphone** for wind noise suppression (see below).
+- **Battery gauge** (for example MAX17048) for an accurate battery percentage and a low battery alert.
+- **Touch pads** on the ESP32's built in touch pins as buttons without mechanics, and a **vibration motor** for haptic altitude cues that get through wind noise.
 - **Recording.** Store the jump's audio on the unit (SD card, or flash after the partition change). LC3 frames are already encoded, so recording them costs almost no CPU: about 4 KB/s per stream at 32 kbps, around 3.6 MB for 15 minutes. Recording each sender's stream separately allows replay and mixing afterwards. Combined with altitude, GPS and link statistics this becomes the black box: a full replay of each jump with audio, altitude, positions and radio quality. Writes need their own task so slow SD writes never stall audio.
